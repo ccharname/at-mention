@@ -27,6 +27,9 @@ const normalizeFolder = (p) => p.endsWith('/') ? p : p + '/'
 // Max candidates to compute expensive scoring boost (backlinks + recency) for.
 const BOOST_CUTOFF = 30
 
+// Chars that break wikilinks (#^|[]) or are illegal in filenames (*"\/<>:?)
+const INVALID_TRIGGER_CHARS = '#^|[]*"\\/<>:?'
+
 // Helper to create multi-line descriptions in settings UI
 const multiLineDesc = (strings) => {
 	const descFragment = document.createDocumentFragment();
@@ -216,7 +219,9 @@ module.exports = class AtMention extends Plugin {
 
 			if (originalFilepath) {
 				const oldName = getEntityName(originalFilepath, mt)
-				if (oldName) {
+				// oldName === name: moved within the same mention-type folder — the entry was
+				// just refreshed above; deleting it here would erase a live entity
+				if (oldName && oldName !== name) {
 					delete maps.fileMap[oldName]
 					for (const [alias, canonical] of Object.entries(maps.aliasMap)) {
 						if (canonical === oldName) delete maps.aliasMap[alias]
@@ -260,6 +265,17 @@ module.exports = class AtMention extends Plugin {
 		const prefix = mt.requirePrefix ? mt.trigger : ''
 		const filename = prefix + display + '.md'
 		const displayName = mt.requirePrefix ? mt.trigger + display : display
+
+		// Existing entity: link to its actual indexed path instead of reconstructing it —
+		// the on-disk name may keep a trigger prefix that getEntityName stripped,
+		// or live in a non-default folder
+		const existingPath = this.entityMaps[trigger]?.fileMap[display]
+		if (existingPath) {
+			if (this.settings.useExplicitLinks) {
+				return '[[' + existingPath + '|' + displayName + ']]'
+			}
+			return '[[' + existingPath.slice(existingPath.lastIndexOf('/') + 1, -3) + ']]'
+		}
 
 		var baseFolder = mt.defaultFolder || (mt.folders && mt.folders[0]) || ''
 		let targetFolder = normalizeFolder(baseFolder)
@@ -673,7 +689,16 @@ class AtMentionSettingTab extends PluginSettingTab {
 					.setValue(mt.trigger)
 					.onChange(async (value) => {
 						if (value.length > 0) {
-							mt.trigger = value.charAt(0)
+							const t = value.charAt(0)
+							if (INVALID_TRIGGER_CHARS.includes(t)) {
+								new Notice('"' + t + '" cannot be a trigger: it breaks wikilinks or filenames')
+								return
+							}
+							if (this.plugin.settings.mentionTypes.some(m => m !== mt && m.trigger === t)) {
+								new Notice('"' + t + '" is already used by another mention type')
+								return
+							}
+							mt.trigger = t
 							await this.plugin.saveSettings()
 							this.plugin.initialize()
 						}
@@ -801,7 +826,7 @@ class AtMentionSettingTab extends PluginSettingTab {
 				.setButtonText('+ Add')
 				.onClick(async () => {
 					var usedTriggers = this.plugin.settings.mentionTypes.map(function(m) { return m.trigger })
-					var candidates = ['@', '#', '&', '~', '!', '+', '$', '^']
+					var candidates = ['@', '&', '~', '!', '+', '$']
 					var available = candidates.find(function(t) { return usedTriggers.indexOf(t) === -1 })
 					this.plugin.settings.mentionTypes.push({
 						trigger: available || '~',
