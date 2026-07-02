@@ -152,9 +152,11 @@ module.exports = class AtMention extends Plugin {
 			}
 		}
 
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored)
+		// structuredClone: defaults hold nested arrays; settings mutate in place,
+		// a shallow copy would corrupt the module-level constants
+		this.settings = Object.assign({}, structuredClone(DEFAULT_SETTINGS), stored)
 		if (!Array.isArray(this.settings.mentionTypes) || this.settings.mentionTypes.length === 0) {
-			this.settings.mentionTypes = [{ ...DEFAULT_MENTION_TYPE }]
+			this.settings.mentionTypes = [structuredClone(DEFAULT_MENTION_TYPE)]
 		}
 	}
 
@@ -163,7 +165,9 @@ module.exports = class AtMention extends Plugin {
 	}
 
 	findTriggerForEntity(entityName) {
-		for (const trigger in this.entityMaps) {
+		// Reverse order: on a name collision the command's Object.assign merge
+		// shows the later type's entry, so resolve to that same type
+		for (const trigger of Object.keys(this.entityMaps).reverse()) {
 			if (this.entityMaps[trigger].fileMap[entityName]) return trigger
 		}
 		return this.settings.mentionTypes[0]?.trigger || '@'
@@ -176,6 +180,7 @@ module.exports = class AtMention extends Plugin {
 	}
 
 	updateAliasesForFile = (file) => {
+		let changed = false
 		for (const mt of this.settings.mentionTypes) {
 			if (!mt.useAliases) continue
 			const name = getEntityName(file.path, mt)
@@ -188,9 +193,9 @@ module.exports = class AtMention extends Plugin {
 			for (const alias of this.getAliasesForFile(file.path)) {
 				maps.aliasMap[alias] = name
 			}
-			this.suggestor.updateEntityMaps(this.entityMaps)
-			return
+			changed = true
 		}
+		if (changed) this.suggestor.updateEntityMaps(this.entityMaps)
 	}
 
 	update = async ({ path, deleted }, originalFilepath) => {
@@ -413,11 +418,11 @@ class EntitySuggestModal extends SuggestModal {
 	}
 
 	getSuggestions(query) {
-		if (!query) query = this.initialQuery
 		const bestByEntity = {}
 
+		// Empty query (user cleared the box): browse everything, ranked by boost
 		for (let key in (this.fileMap || {})) {
-			const score = fuzzyMatch(query, key)
+			const score = query ? fuzzyMatch(query, key) : 1
 			if (score > 0) {
 				bestByEntity[key] = { score, matchedAlias: null }
 			}
@@ -434,7 +439,7 @@ class EntitySuggestModal extends SuggestModal {
 
 		let fuzzyResults = Object.entries(bestByEntity).map(([name, data]) => ({ name, ...data }))
 		fuzzyResults.sort((a, b) => b.score - a.score)
-		const topCandidates = fuzzyResults.slice(0, BOOST_CUTOFF)
+		const topCandidates = query ? fuzzyResults.slice(0, BOOST_CUTOFF) : fuzzyResults
 
 		for (const candidate of topCandidates) {
 			candidate.score += getScoringBoost(this.app, this.fileMap[candidate.name])
@@ -447,7 +452,7 @@ class EntitySuggestModal extends SuggestModal {
 			matchedAlias: s.matchedAlias,
 		}))
 
-		suggestions.push({ type: 'create', name: query })
+		if (query) suggestions.push({ type: 'create', name: query })
 		return suggestions
 	}
 
@@ -487,7 +492,8 @@ class AtMentionSuggestor extends EditorSuggest {
 	close() {
 		if (this.context && !this._selectionMade) {
 			const key = this.context.start.line + ':' + this.context.start.ch
-			this.dismissedTriggers[key] = true
+			// Remember what was dismissed, so a changed query can re-trigger
+			this.dismissedTriggers[key] = this.context.query || ''
 		}
 		this._selectionMade = false
 		super.close()
@@ -505,7 +511,9 @@ class AtMentionSuggestor extends EditorSuggest {
 			const idx = line.lastIndexOf(mt.trigger)
 			if (idx < 0) continue
 			const query = line.substring(idx + mt.trigger.length)
-			if (query.includes(']]')) continue
+			// Boundary: a mention is a name, not a sentence — stop following the cursor
+			// once the query is clearly prose (keeps multi-word names working)
+			if (query.length > 50 || query.split(' ').length > 5) continue
 			if (idx > 0 && line[idx - 1] !== ' ') continue
 
 			if (!bestMatch || idx > bestMatch.index) {
@@ -519,8 +527,12 @@ class AtMentionSuggestor extends EditorSuggest {
 		}
 
 		const key = cursor.line + ':' + bestMatch.index
-		if (this.dismissedTriggers[key]) {
-			return null
+		const dismissedQuery = this.dismissedTriggers[key]
+		if (dismissedQuery !== undefined) {
+			// Still the same (or continued) query → respect the dismissal;
+			// a rewritten query is a fresh mention attempt
+			if (bestMatch.query.startsWith(dismissedQuery)) return null
+			delete this.dismissedTriggers[key]
 		}
 
 		this.activeTrigger = bestMatch.trigger
