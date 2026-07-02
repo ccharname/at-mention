@@ -71,6 +71,7 @@ function escapeRegex(str) {
 
 module.exports = class AtMention extends Plugin {
 	async onload() {
+		this.entityMaps = {}
 		await this.loadSettings()
 		this.registerEvent(this.app.vault.on('delete', async event => { await this.update(event) }))
 		this.registerEvent(this.app.vault.on('create', async event => { await this.update(event) }))
@@ -232,7 +233,7 @@ module.exports = class AtMention extends Plugin {
 		for (const mt of this.settings.mentionTypes) {
 			const fileMap = {}
 			const aliasMap = {}
-			for (const filename in this.app.vault.fileMap) {
+			for (const { path: filename } of this.app.vault.getMarkdownFiles()) {
 				const name = getEntityName(filename, mt)
 				if (name) {
 					fileMap[name] = filename
@@ -523,7 +524,8 @@ class AtMentionSuggestor extends EditorSuggest {
 		const bestByEntity = {}
 
 		for (let key in (maps.fileMap || {})) {
-			const score = fuzzyMatch(context.query, key)
+			// Empty query (bare trigger): list everything, ranked by backlink/recency boost
+			const score = context.query ? fuzzyMatch(context.query, key) : 1
 			if (score > 0) {
 				bestByEntity[key] = { score, matchedAlias: null }
 			}
@@ -542,7 +544,8 @@ class AtMentionSuggestor extends EditorSuggest {
 
 		let fuzzyResults = Object.entries(bestByEntity).map(([name, data]) => ({ name, ...data }))
 		fuzzyResults.sort((a, b) => b.score - a.score)
-		const topCandidates = fuzzyResults.slice(0, BOOST_CUTOFF)
+		// ponytail: empty query boosts all entities (scores are uniform, cutoff would pick arbitrarily); fine for hundreds, revisit if a mention folder hits thousands
+		const topCandidates = context.query ? fuzzyResults.slice(0, BOOST_CUTOFF) : fuzzyResults
 
 		for (const candidate of topCandidates) {
 			candidate.score += getScoringBoost(this.app, maps.fileMap[candidate.name])
