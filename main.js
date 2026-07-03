@@ -374,16 +374,26 @@ function fuzzyMatch(pattern, text) {
     return -Infinity;
 }
 
-function getScoringBoost(app, filepath) {
+// getBacklinksForFile scans the whole vault's link graph per call — calling it once per
+// candidate (up to every entity, on a bare trigger) is what caused the multi-second lag.
+// One pass over resolvedLinks up front gives the same counts for all candidates at once.
+function buildBacklinkCounts(app) {
+    const counts = {};
+    const resolvedLinks = app.metadataCache.resolvedLinks || {};
+    for (const source in resolvedLinks) {
+        for (const target in resolvedLinks[source]) {
+            counts[target] = (counts[target] || 0) + 1;
+        }
+    }
+    return counts;
+}
+
+function getScoringBoost(app, filepath, backlinkCounts) {
     const file = app.vault.getAbstractFileByPath(filepath);
     if (!file) return 0;
 
-    let backlinkBoost = 0;
-    const backlinks = app.metadataCache.getBacklinksForFile(file);
-    if (backlinks && backlinks.data) {
-        const count = backlinks.data.size;
-        backlinkBoost = count > 0 ? Math.log(count + 1) * 1000 : 0;
-    }
+    const count = backlinkCounts[filepath] || 0;
+    const backlinkBoost = count > 0 ? Math.log(count + 1) * 1000 : 0;
 
     const daysAgo = (Date.now() - file.stat.mtime) / 86400000;
     const recencyBoost = Math.max(0, 200 * Math.exp(-daysAgo / 30));
@@ -441,8 +451,9 @@ class EntitySuggestModal extends SuggestModal {
 		fuzzyResults.sort((a, b) => b.score - a.score)
 		const topCandidates = query ? fuzzyResults.slice(0, BOOST_CUTOFF) : fuzzyResults
 
+		const backlinkCounts = buildBacklinkCounts(this.app)
 		for (const candidate of topCandidates) {
-			candidate.score += getScoringBoost(this.app, this.fileMap[candidate.name])
+			candidate.score += getScoringBoost(this.app, this.fileMap[candidate.name], backlinkCounts)
 		}
 
 		topCandidates.sort((a, b) => b.score - a.score)
@@ -575,8 +586,9 @@ class AtMentionSuggestor extends EditorSuggest {
 		// ponytail: empty query boosts all entities (scores are uniform, cutoff would pick arbitrarily); fine for hundreds, revisit if a mention folder hits thousands
 		const topCandidates = context.query ? fuzzyResults.slice(0, BOOST_CUTOFF) : fuzzyResults
 
+		const backlinkCounts = buildBacklinkCounts(this.app)
 		for (const candidate of topCandidates) {
-			candidate.score += getScoringBoost(this.app, maps.fileMap[candidate.name])
+			candidate.score += getScoringBoost(this.app, maps.fileMap[candidate.name], backlinkCounts)
 		}
 
 		topCandidates.sort((a, b) => b.score - a.score)
