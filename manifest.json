@@ -1,9 +1,9 @@
 {
 	"id": "at-mention",
 	"name": "At Mention",
-	"version": "2.0.4",
+	"version": "2.0.5",
 	"minAppVersion": "1.7.2",
-	"description": "Multi-trigger entity mentions: type @ (or any custom trigger) to link people, projects, or any entity folder with fuzzy search, aliases, and smart ranking.",
+	"description": "多触发字符的实体提及：输入 @（或任意自定义触发字符）即可模糊搜索并链接人物、项目等任意实体文件夹，支持别名与智能排序。",
 	"author": "zhengma",
 	"isDesktopOnly": false
 }

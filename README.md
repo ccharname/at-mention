@@ -1,33 +1,33 @@
 # At Mention
 
-Obsidian plugin for multi-trigger entity mentions. Type `@` (or any custom trigger character) to fuzzy-search and link entity notes — people, projects, companies, anything that lives in a folder.
+多触发字符实体提及的 Obsidian 插件。输入 `@`（或任意自定义触发字符）即可模糊搜索并链接实体笔记——人物、项目、公司，任何存放在文件夹里的东西。
 
-## Features
+## 功能
 
-- **Multiple mention types** — each trigger character (`@`, `#`, `&`, …) maps to its own folder(s) and settings
-- **Fuzzy search with smart ranking** — matches names and frontmatter aliases; results boosted by backlink count and recency
-- **Bare trigger browsing** — type just `@` to see your most-linked / most-recent entities
-- **Auto-create entity files** — optionally create the note (with per-entity or per-lastname subfolders) when you mention someone new
-- **Link selected text** — command palette action to turn any selected text into an entity link
+- **多提及类型** —— 每个触发字符（`@`、`#`、`&`……）对应各自的文件夹和设置
+- **模糊搜索 + 智能排序** —— 匹配名称和 frontmatter 别名；结果按反链数和最近使用时间加权
+- **空触发字符浏览** —— 只输入 `@` 就能看到最常被链接 / 最近使用的实体
+- **自动创建实体文件** —— 提及一个新名字时可选自动建笔记（支持按实体或按姓氏建子文件夹）
+- **选中文字建链接** —— 命令面板动作，把任意选中文字变成实体链接
 
-## Install via BRAT
+## 通过 BRAT 安装
 
-1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin
-2. In BRAT settings, choose **Add Beta plugin** and enter:
+1. 安装 [BRAT](https://github.com/TfTHacker/obsidian42-brat) 插件
+2. 在 BRAT 设置里选择 **Add Beta plugin**，输入：
    ```
    ccharname/at-mention
    ```
-3. Enable **At Mention** in Community plugins
+3. 在 Community plugins 里启用 **At Mention**
 
-## Usage
+## 用法
 
-1. Open **Settings → At Mention** and configure a mention type: trigger character, label, and the folder(s) containing your entity notes (e.g. `People/`)
-2. In any note, type the trigger (e.g. `@ali`) and pick a suggestion — a wikilink is inserted
-3. Optional per-type settings:
-   - **Require trigger prefix in filename** — only files named like `@Alice.md` count as entities
-   - **Include aliases** — match frontmatter `aliases` too
-   - **Auto-create files** — create the entity note on first mention
-   - **Folder mode** — flat, per-entity subfolder, or per-lastname subfolder
+1. 打开 **设置 → At Mention**，配置一个提及类型：触发字符、标签，以及存放实体笔记的文件夹（例如 `People/`）
+2. 在任意笔记里输入触发字符（例如 `@ali`），选择一个建议——会插入一个 wikilink
+3. 每个类型可选的设置：
+   - **文件名需要触发字符前缀** —— 只有像 `@Alice.md` 这样命名的文件才算实体
+   - **包含别名** —— 同时匹配 frontmatter 的 `aliases`
+   - **自动创建文件** —— 首次提及时自动建实体笔记
+   - **文件夹模式** —— 平铺、按实体建子文件夹、或按姓氏建子文件夹
 
 ## License
 

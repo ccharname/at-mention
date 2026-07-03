@@ -3,7 +3,7 @@ const { AbstractInputSuggest, EditorSuggest, SuggestModal, Notice, Plugin, Plugi
 // Default mention type template
 const DEFAULT_MENTION_TYPE = {
 	trigger: '@',
-	label: 'People',
+	label: '人物',
 	folders: ['People/'],
 	defaultFolder: 'People/',
 	requirePrefix: true,
@@ -90,7 +90,7 @@ module.exports = class AtMention extends Plugin {
 			editorCallback: (editor, view) => {
 				const selection = editor.getSelection()
 				if (!selection) {
-					new Notice('No text selected')
+					new Notice('未选中文字')
 					return
 				}
 				const from = editor.getCursor('from')
@@ -127,7 +127,7 @@ module.exports = class AtMention extends Plugin {
 		if (stored.peopleFolder && !stored.mentionTypes) {
 			stored.mentionTypes = [{
 				trigger: '@',
-				label: 'People',
+				label: '人物',
 				folders: [stored.peopleFolder],
 				defaultFolder: stored.peopleFolder,
 				requirePrefix: stored.requireAtPrefix ?? true,
@@ -409,7 +409,7 @@ class EntitySuggestModal extends SuggestModal {
 		this.settings = settings
 		this.initialQuery = initialQuery
 		this.onChoose = onChoose
-		this.setPlaceholder('Select entity or create new')
+		this.setPlaceholder('选择实体或新建')
 	}
 
 	onOpen() {
@@ -469,9 +469,9 @@ class EntitySuggestModal extends SuggestModal {
 
 	renderSuggestion(suggestion, el) {
 		if (suggestion.type === 'create') {
-			el.createEl('div', { text: 'New: ' + suggestion.name })
+			el.createEl('div', { text: '新建：' + suggestion.name })
 		} else if (suggestion.matchedAlias) {
-			el.createEl('div', { text: suggestion.name + ' (via ' + suggestion.matchedAlias + ')' })
+			el.createEl('div', { text: suggestion.name + '（别名：' + suggestion.matchedAlias + '）' })
 		} else {
 			el.createEl('div', { text: suggestion.name })
 		}
@@ -607,9 +607,9 @@ class AtMentionSuggestor extends EditorSuggest {
 		const maps = this.entityMaps[this.activeTrigger]
 		const label = maps ? maps.config.label : ''
 		if (value.suggestionType === 'create') {
-			elem.setText('New ' + label + ': ' + value.displayText)
+			elem.setText('新建' + label + '：' + value.displayText)
 		} else if (value.matchedAlias) {
-			elem.setText(value.displayText + ' (via ' + value.matchedAlias + ')')
+			elem.setText(value.displayText + '（别名：' + value.matchedAlias + '）')
 		} else {
 			elem.setText(value.displayText)
 		}
@@ -662,11 +662,11 @@ class AtMentionSettingTab extends PluginSettingTab {
 	display() {
 		const { containerEl } = this
 		containerEl.empty()
-		containerEl.createEl('h2', { text: 'At Mention Settings' })
+		containerEl.createEl('h2', { text: 'At Mention 设置' })
 
 		new Setting(containerEl)
-			.setName('Explicit links')
-			.setDesc('When inserting links include the full path')
+			.setName('完整路径链接')
+			.setDesc('插入链接时包含完整路径')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.useExplicitLinks)
 				.onChange(async (value) => {
@@ -676,7 +676,7 @@ class AtMentionSettingTab extends PluginSettingTab {
 				})
 			)
 
-		containerEl.createEl('h3', { text: 'Mention Types' })
+		containerEl.createEl('h3', { text: '提及类型' })
 
 		this.plugin.settings.mentionTypes.forEach((mt, index) => {
 			const section = containerEl.createDiv({ cls: 'at-mention-type-section' })
@@ -695,7 +695,7 @@ class AtMentionSettingTab extends PluginSettingTab {
 			title.style.margin = '0'
 
 			if (this.plugin.settings.mentionTypes.length > 1) {
-				const deleteBtn = header.createEl('button', { text: 'Remove' })
+				const deleteBtn = header.createEl('button', { text: '删除' })
 				deleteBtn.style.color = 'var(--text-error)'
 				deleteBtn.addEventListener('click', async () => {
 					this.plugin.settings.mentionTypes.splice(index, 1)
@@ -706,8 +706,8 @@ class AtMentionSettingTab extends PluginSettingTab {
 			}
 
 			new Setting(section)
-				.setName('Trigger character')
-				.setDesc('The character that activates this mention type')
+				.setName('触发字符')
+				.setDesc('激活这个提及类型的字符')
 				.addText(text => text
 					.setPlaceholder('@')
 					.setValue(mt.trigger)
@@ -715,11 +715,11 @@ class AtMentionSettingTab extends PluginSettingTab {
 						if (value.length > 0) {
 							const t = value.charAt(0)
 							if (INVALID_TRIGGER_CHARS.includes(t)) {
-								new Notice('"' + t + '" cannot be a trigger: it breaks wikilinks or filenames')
+								new Notice('"' + t + '" 不能作为触发字符：会破坏 wikilink 或文件名')
 								return
 							}
 							if (this.plugin.settings.mentionTypes.some(m => m !== mt && m.trigger === t)) {
-								new Notice('"' + t + '" is already used by another mention type')
+								new Notice('"' + t + '" 已被其他提及类型使用')
 								return
 							}
 							mt.trigger = t
@@ -730,10 +730,10 @@ class AtMentionSettingTab extends PluginSettingTab {
 				)
 
 			new Setting(section)
-				.setName('Label')
-				.setDesc('Display name for this mention type')
+				.setName('标签')
+				.setDesc('这个提及类型的显示名称')
 				.addText(text => text
-					.setPlaceholder('People')
+					.setPlaceholder('人物')
 					.setValue(mt.label)
 					.onChange(async (value) => {
 						mt.label = value
@@ -745,8 +745,8 @@ class AtMentionSettingTab extends PluginSettingTab {
 			var folders = mt.folders || []
 			folders.forEach((folder, fi) => {
 				new Setting(foldersContainer)
-					.setName(fi === 0 ? 'Folders' : '')
-					.setDesc(fi === 0 ? 'Folders to scan for entity files' : '')
+					.setName(fi === 0 ? '文件夹' : '')
+					.setDesc(fi === 0 ? '扫描实体文件的文件夹' : '')
 					.addSearch(search => {
 						var handleFolderChange = async (value) => {
 							mt.folders[fi] = value
@@ -755,7 +755,7 @@ class AtMentionSettingTab extends PluginSettingTab {
 							this.plugin.initialize()
 						}
 						search
-							.setPlaceholder('People/')
+							.setPlaceholder('人物/')
 							.setValue(folder)
 							.onChange(handleFolderChange)
 						new FolderSuggest(this.app, search.inputEl, handleFolderChange)
@@ -763,7 +763,7 @@ class AtMentionSettingTab extends PluginSettingTab {
 					})
 					.addButton(btn => {
 						btn.setButtonText('-')
-						btn.setTooltip('Remove folder')
+						btn.setTooltip('删除文件夹')
 						if (folders.length <= 1) btn.setDisabled(true)
 						btn.onClick(async () => {
 							mt.folders.splice(fi, 1)
@@ -776,7 +776,7 @@ class AtMentionSettingTab extends PluginSettingTab {
 			})
 			new Setting(foldersContainer)
 				.addButton(btn => {
-					btn.setButtonText('+ Add folder')
+					btn.setButtonText('+ 添加文件夹')
 					btn.onClick(async () => {
 						if (!mt.folders) mt.folders = []
 						mt.folders.push('')
@@ -786,10 +786,10 @@ class AtMentionSettingTab extends PluginSettingTab {
 				})
 
 			new Setting(section)
-				.setName('Require trigger prefix in filename')
+				.setName('文件名需要触发字符前缀')
 				.setDesc(multiLineDesc([
-					'When enabled, only files starting with "' + mt.trigger + '" are recognized.',
-					'When disabled, all .md files in the folder are treated as entities.'
+					'启用后，只有以 "' + mt.trigger + '" 开头的文件会被识别为实体。',
+					'禁用后，该文件夹下所有 .md 文件都会被视为实体。'
 				]))
 				.addToggle(toggle => toggle
 					.setValue(mt.requirePrefix)
@@ -801,8 +801,8 @@ class AtMentionSettingTab extends PluginSettingTab {
 				)
 
 			new Setting(section)
-				.setName('Auto-create files')
-				.setDesc('Automatically create entity files when selecting a new suggestion')
+				.setName('自动创建文件')
+				.setDesc('选择新建建议时自动创建对应实体文件')
 				.addToggle(toggle => toggle
 					.setValue(mt.autoCreateFiles)
 					.onChange(async (value) => {
@@ -812,8 +812,8 @@ class AtMentionSettingTab extends PluginSettingTab {
 				)
 
 			new Setting(section)
-				.setName('Include aliases')
-				.setDesc('Match entities by their frontmatter aliases')
+				.setName('包含别名')
+				.setDesc('通过 frontmatter 中的 aliases 匹配实体')
 				.addToggle(toggle => toggle
 					.setValue(mt.useAliases)
 					.onChange(async (value) => {
@@ -824,16 +824,16 @@ class AtMentionSettingTab extends PluginSettingTab {
 				)
 
 			new Setting(section)
-				.setName('Folder mode')
+				.setName('文件夹模式')
 				.setDesc(multiLineDesc([
-					"Default: Folder/Entity.md",
-					"Per Entity: Folder/Entity/Entity.md",
-					"Per Lastname: Folder/LastName/Entity.md",
+					"默认：Folder/Entity.md",
+					"按实体：Folder/Entity/Entity.md",
+					"按姓氏：Folder/LastName/Entity.md",
 				]))
 				.addDropdown(dropdown => {
-					dropdown.addOption("DEFAULT", "Default")
-					dropdown.addOption("PER_PERSON", "Per entity")
-					dropdown.addOption("PER_LASTNAME", "Per lastname")
+					dropdown.addOption("DEFAULT", "默认")
+					dropdown.addOption("PER_PERSON", "按实体")
+					dropdown.addOption("PER_LASTNAME", "按姓氏")
 					dropdown.setValue(mt.folderMode || 'DEFAULT')
 					dropdown.onChange(async (value) => {
 						mt.folderMode = value
@@ -844,17 +844,17 @@ class AtMentionSettingTab extends PluginSettingTab {
 		})
 
 		new Setting(containerEl)
-			.setName('Add mention type')
-			.setDesc('Add a new trigger character with its own folder')
+			.setName('添加提及类型')
+			.setDesc('添加一个拥有独立文件夹的新触发字符')
 			.addButton(button => button
-				.setButtonText('+ Add')
+				.setButtonText('+ 添加')
 				.onClick(async () => {
 					var usedTriggers = this.plugin.settings.mentionTypes.map(function(m) { return m.trigger })
 					var candidates = ['@', '&', '~', '!', '+', '$']
 					var available = candidates.find(function(t) { return usedTriggers.indexOf(t) === -1 })
 					this.plugin.settings.mentionTypes.push({
 						trigger: available || '~',
-						label: 'New Type',
+						label: '新类型',
 						folders: [''],
 						defaultFolder: '',
 						requirePrefix: false,
