@@ -1,7 +1,7 @@
 {
 	"id": "at-mention",
 	"name": "At Mention",
-	"version": "2.0.5",
+	"version": "2.0.6",
 	"minAppVersion": "1.7.2",
 	"description": "多触发字符的实体提及：输入 @（或任意自定义触发字符）即可模糊搜索并链接人物、项目等任意实体文件夹，支持别名与智能排序。",
 	"author": "zhengma",

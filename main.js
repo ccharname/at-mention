@@ -30,6 +30,9 @@ const BOOST_CUTOFF = 30
 // Chars that break wikilinks (#^|[]) or are illegal in filenames (*"\/<>:?)
 const INVALID_TRIGGER_CHARS = '#^|[]*"\\/<>:?'
 
+const isValidEntityName = (name) => typeof name === 'string' && name.trim().length > 0
+	&& !/[#^|\[\]*"\\/<>:?\x00-\x1f\x7f]/.test(name)
+
 // Helper to create multi-line descriptions in settings UI
 const multiLineDesc = (strings) => {
 	const descFragment = document.createDocumentFragment();
@@ -76,7 +79,7 @@ module.exports = class AtMention extends Plugin {
 	async onload() {
 		this.entityMaps = {}
 		await this.loadSettings()
-		this.registerEvent(this.app.vault.on('delete', async event => { await this.update(event) }))
+		this.registerEvent(this.app.vault.on('delete', async event => { await this.update(event, undefined, true) }))
 		this.registerEvent(this.app.vault.on('create', async event => { await this.update(event) }))
 		this.registerEvent(this.app.vault.on('rename', async (event, originalFilepath) => { await this.update(event, originalFilepath) }))
 		this.registerEvent(this.app.metadataCache.on('changed', (file) => { this.updateAliasesForFile(file) }))
@@ -112,7 +115,7 @@ module.exports = class AtMention extends Plugin {
 					async (entityName) => {
 						const trigger = this.findTriggerForEntity(entityName)
 						const link = await this.createEntityLink(entityName, trigger)
-						editor.replaceRange(link, from, to)
+						if (link !== null) editor.replaceRange(link, from, to)
 					}
 				).open()
 			}
@@ -198,7 +201,17 @@ module.exports = class AtMention extends Plugin {
 		if (changed) this.suggestor.updateEntityMaps(this.entityMaps)
 	}
 
-	update = async ({ path, deleted }, originalFilepath) => {
+	update = async ({ path, deleted, children }, originalFilepath, isDelete = false) => {
+		// Folder events are emitted for the folder, not each indexed descendant.
+		if (Array.isArray(children)) {
+			const affected = [path, originalFilepath].filter(Boolean).map(normalizeFolder)
+			const relevant = this.settings.mentionTypes.some(mt => (mt.folders || []).some(folder => {
+				const root = normalizeFolder(folder)
+				return affected.some(p => p.startsWith(root) || root.startsWith(p))
+			}))
+			if (relevant) this.initialize()
+			return
+		}
 		let needsUpdate = false
 		for (const mt of this.settings.mentionTypes) {
 			const maps = this.entityMaps[mt.trigger]
@@ -206,7 +219,7 @@ module.exports = class AtMention extends Plugin {
 
 			const name = getEntityName(path, mt)
 			if (name) {
-				if (deleted) {
+				if (isDelete || deleted) {
 					delete maps.fileMap[name]
 					for (const [alias, canonical] of Object.entries(maps.aliasMap)) {
 						if (canonical === name) delete maps.aliasMap[alias]
@@ -256,12 +269,14 @@ module.exports = class AtMention extends Plugin {
 			}
 			this.entityMaps[mt.trigger] = { fileMap, aliasMap, config: mt }
 		}
-		window.setTimeout(() => {
-			this.suggestor.updateEntityMaps(this.entityMaps)
-		})
+		this.suggestor.updateEntityMaps(this.entityMaps)
 	}
 
 	async createEntityLink(display, trigger) {
+		if (!isValidEntityName(display)) {
+			new Notice('实体名称不能为空或包含文件名、链接保留字符')
+			return null
+		}
 		const mt = this.settings.mentionTypes.find(m => m.trigger === trigger)
 		if (!mt) return '[[' + display + ']]'
 
@@ -296,8 +311,15 @@ module.exports = class AtMention extends Plugin {
 
 		if (mt.autoCreateFiles) {
 			const folderToCreate = targetFolder.replace(/\/$/, '')
-			try { await this.app.vault.createFolder(folderToCreate) } catch (e) { /* exists */ }
-			try { await this.app.vault.create(filePath, '') } catch (e) { /* exists */ }
+			try {
+				if (folderToCreate && !this.app.vault.getAbstractFileByPath(folderToCreate)) {
+					await this.app.vault.createFolder(folderToCreate)
+				}
+				if (!this.app.vault.getAbstractFileByPath(filePath)) await this.app.vault.create(filePath, '')
+			} catch (e) {
+				new Notice('无法创建实体：' + (e.message || String(e)))
+				return null
+			}
 		}
 
 		if (this.settings.useExplicitLinks) {
@@ -451,7 +473,7 @@ class EntitySuggestModal extends SuggestModal {
 		fuzzyResults.sort((a, b) => b.score - a.score)
 		const topCandidates = query ? fuzzyResults.slice(0, BOOST_CUTOFF) : fuzzyResults
 
-		const backlinkCounts = buildBacklinkCounts(this.app)
+		const backlinkCounts = topCandidates.length ? buildBacklinkCounts(this.app) : {}
 		for (const candidate of topCandidates) {
 			candidate.score += getScoringBoost(this.app, this.fileMap[candidate.name], backlinkCounts)
 		}
@@ -463,7 +485,7 @@ class EntitySuggestModal extends SuggestModal {
 			matchedAlias: s.matchedAlias,
 		}))
 
-		if (query) suggestions.push({ type: 'create', name: query })
+		if (isValidEntityName(query)) suggestions.push({ type: 'create', name: query })
 		return suggestions
 	}
 
@@ -586,7 +608,7 @@ class AtMentionSuggestor extends EditorSuggest {
 		// ponytail: empty query boosts all entities (scores are uniform, cutoff would pick arbitrarily); fine for hundreds, revisit if a mention folder hits thousands
 		const topCandidates = context.query ? fuzzyResults.slice(0, BOOST_CUTOFF) : fuzzyResults
 
-		const backlinkCounts = buildBacklinkCounts(this.app)
+		const backlinkCounts = topCandidates.length ? buildBacklinkCounts(this.app) : {}
 		for (const candidate of topCandidates) {
 			candidate.score += getScoringBoost(this.app, maps.fileMap[candidate.name], backlinkCounts)
 		}
@@ -599,7 +621,7 @@ class AtMentionSuggestor extends EditorSuggest {
 			context,
 		}))
 
-		suggestions.push({ suggestionType: 'create', displayText: context.query, context })
+		if (isValidEntityName(context.query)) suggestions.push({ suggestionType: 'create', displayText: context.query, context })
 		return suggestions
 	}
 
@@ -620,6 +642,7 @@ class AtMentionSuggestor extends EditorSuggest {
 		this.dismissedTriggers = {}
 		const trigger = this.activeTrigger
 		const link = await this.plugin.createEntityLink(value.displayText, trigger)
+		if (link === null) return
 
 		value.context.editor.replaceRange(
 			link,
