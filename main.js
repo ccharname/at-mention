@@ -101,6 +101,7 @@ module.exports = class AtMention extends Plugin {
 		this._atMentionDisposed = false
 		this.entityMaps = Object.create(null)
 		await this.loadSettings()
+		if (this._atMentionDisposed) return
 		this.registerEvent(this.app.vault.on('delete', async event => { await this.update(event, undefined, true) }))
 		this.registerEvent(this.app.vault.on('create', async event => { await this.update(event) }))
 		this.registerEvent(this.app.vault.on('rename', async (event, originalFilepath) => { await this.update(event, originalFilepath) }))
@@ -294,6 +295,7 @@ module.exports = class AtMention extends Plugin {
 	}
 
 	initialize = () => {
+		if (this._atMentionDisposed) return
 		this.entityMaps = Object.create(null)
 		for (const mt of this.settings.mentionTypes) {
 			const fileMap = Object.create(null), aliasMap = Object.create(null), candidates = Object.create(null)
