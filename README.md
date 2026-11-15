@@ -52,3 +52,26 @@ node behavior-test.cjs
 node --test behavior-test.cjs fix-regression.cjs
 node test.js
 ```
+
+## 自动检查与发布校验
+
+本地先执行锁文件安装，再运行统一入口：
+
+```sh
+npm ci --ignore-scripts
+npm run verify
+```
+
+该入口覆盖全部既有回归与发布检查的故障注入测试，核对 package/manifest/versions、移动端声明及必需资产，写入 `dist/checksums.json` 和 `dist/SHA256SUMS`。每次启动先移除旧的成功证据；任一阶段失败返回非零。
+
+校验已发布版本（一条命令重跑回归后，实际下载 Release 文件并比对 SHA256）：
+
+```sh
+npm run verify:release -- 2.0.7
+```
+
+远端读取使用已认证的 `gh` CLI。也可在完整检查通过后用 `node scripts/release-check.cjs --draft X.Y.Z` 校验同版本草稿，再由既有发布流程发布。草稿与公开状态分别核对，缺资产、错误版本、大小/digest/下载内容不一致、tag 源码差异、校验期间资产或标签变化都会失败。检查代码不会上传、覆盖资产或创建发布。
+
+CI 在 push/PR、手动运行和发布事件上执行。手动可填写 release_tag，追加远端校验。Action 固定完整提交 SHA，依赖锁安装，检查仅有 contents:read 权限。
+
+每次发布应保留 `dist/release-verification.json`，并在两台 Mac 与手机核对 BRAT 安装版本。CI 不代替真机交互验收。

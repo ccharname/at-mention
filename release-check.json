@@ -1,0 +1,8 @@
+{
+  "repository": "ccharname/at-mention",
+  "pluginId": "at-mention",
+  "assets": [
+    "main.js",
+    "manifest.json"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "at-mention",
+  "version": "2.0.7",
+  "private": true,
+  "description": "Regression and release checks for At Mention",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node scripts/run-checks.cjs",
+    "verify": "npm test && node scripts/release-check.cjs --local",
+    "verify:release": "npm run verify && node scripts/release-check.cjs --release"
+  }
+}
