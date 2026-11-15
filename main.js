@@ -33,6 +33,27 @@ const INVALID_TRIGGER_CHARS = '#^|[]*"\\/<>:?'
 const isValidEntityName = (name) => typeof name === 'string' && name.trim().length > 0
 	&& !/[#^|\[\]*"\\/<>:?\x00-\x1f\x7f]/.test(name)
 
+// Public Editor/MarkdownView APIs only: a completed file write must not edit a
+// different document or a range whose text moved while the write was pending.
+const captureEditorRange = (app, editor, from, to, file, view) => {
+	try {
+		const owner = view?.editor === editor ? view : app.workspace?.getLeavesOfType?.('markdown')
+			.map(leaf => leaf.view).find(candidate => candidate.editor === editor)
+		if (!owner || owner.editor !== editor || !owner.file || (file !== undefined && owner.file !== file)) return null
+		if (typeof editor.getRange !== 'function') return null
+		const start = { line: from.line, ch: from.ch }, end = { line: to.line, ch: to.ch }
+		return { app, editor, owner, file: owner.file, path: owner.file.path, start, end, text: editor.getRange(start, end) }
+	} catch { return null }
+}
+
+const editorRangeUnchanged = (guard) => {
+	try {
+		return guard && guard.owner.editor === guard.editor && guard.owner.file === guard.file
+			&& guard.file.path === guard.path && guard.editor.getRange(guard.start, guard.end) === guard.text
+			&& (!guard.app.workspace?.getLeavesOfType || guard.app.workspace.getLeavesOfType('markdown').some(leaf => leaf.view === guard.owner))
+	} catch { return false }
+}
+
 // Helper to create multi-line descriptions in settings UI
 const multiLineDesc = (strings) => {
 	const descFragment = document.createDocumentFragment();
@@ -77,7 +98,8 @@ function escapeRegex(str) {
 
 module.exports = class AtMention extends Plugin {
 	async onload() {
-		this.entityMaps = {}
+		this._atMentionDisposed = false
+		this.entityMaps = Object.create(null)
 		await this.loadSettings()
 		this.registerEvent(this.app.vault.on('delete', async event => { await this.update(event, undefined, true) }))
 		this.registerEvent(this.app.vault.on('create', async event => { await this.update(event) }))
@@ -98,9 +120,11 @@ module.exports = class AtMention extends Plugin {
 				}
 				const from = editor.getCursor('from')
 				const to = editor.getCursor('to')
+				const guard = captureEditorRange(this.app, editor, from, to, view.file, view)
+				if (!guard) return
 
-				const allFileMaps = {}
-				const allAliasMaps = {}
+				const allFileMaps = Object.create(null)
+				const allAliasMaps = Object.create(null)
 				for (const trigger in this.entityMaps) {
 					Object.assign(allFileMaps, this.entityMaps[trigger].fileMap)
 					Object.assign(allAliasMaps, this.entityMaps[trigger].aliasMap)
@@ -113,15 +137,20 @@ module.exports = class AtMention extends Plugin {
 					this.settings,
 					selection,
 					async (entityName) => {
+						if (this._atMentionDisposed || !editorRangeUnchanged(guard)) return
 						const trigger = this.findTriggerForEntity(entityName)
-						const link = await this.createEntityLink(entityName, trigger)
-						if (link !== null) editor.replaceRange(link, from, to)
+						const link = await this.createEntityLink(entityName, trigger, guard.path)
+						if (!this._atMentionDisposed && link !== null && editorRangeUnchanged(guard)) editor.replaceRange(link, guard.start, guard.end)
 					}
 				).open()
 			}
 		})
 
 		this.app.workspace.onLayoutReady(this.initialize)
+	}
+
+	onunload() {
+		this._atMentionDisposed = true
 	}
 
 	async loadSettings() {
@@ -179,7 +208,7 @@ module.exports = class AtMention extends Plugin {
 	getAliasesForFile = (filepath) => {
 		const file = this.app.vault.getAbstractFileByPath(filepath)
 		const aliases = file && this.app.metadataCache.getFileCache(file)?.frontmatter?.aliases
-		return Array.isArray(aliases) ? aliases.filter(a => typeof a === 'string') : []
+		return typeof aliases === 'string' ? [aliases] : Array.isArray(aliases) ? aliases.filter(a => typeof a === 'string') : []
 	}
 
 	updateAliasesForFile = (file) => {
@@ -190,6 +219,7 @@ module.exports = class AtMention extends Plugin {
 			if (!name) continue
 			const maps = this.entityMaps[mt.trigger]
 			if (!maps) continue
+			if (maps.fileMap[name] && maps.fileMap[name] !== file.path) continue
 			for (const [alias, canonical] of Object.entries(maps.aliasMap)) {
 				if (canonical === name) delete maps.aliasMap[alias]
 			}
@@ -199,6 +229,28 @@ module.exports = class AtMention extends Plugin {
 			changed = true
 		}
 		if (changed) this.suggestor.updateEntityMaps(this.entityMaps)
+	}
+
+	getCandidates = (maps) => {
+		if (!maps.candidates) {
+			maps.candidates = Object.create(null)
+			for (const [name, path] of Object.entries(maps.fileMap)) maps.candidates[name] = [path]
+		}
+		return maps.candidates
+	}
+
+	refreshEntityNames = (maps, mt, names) => {
+		for (const name of names) {
+			const candidates = this.getCandidates(maps)[name] || []
+			if (candidates.length) maps.fileMap[name] = candidates.slice().sort()[candidates.length - 1]
+			else delete maps.fileMap[name]
+			for (const [alias, canonical] of Object.entries(maps.aliasMap)) {
+				if (canonical === name) delete maps.aliasMap[alias]
+			}
+			if (mt.useAliases && maps.fileMap[name]) {
+				for (const alias of this.getAliasesForFile(maps.fileMap[name])) maps.aliasMap[alias] = name
+			}
+		}
 	}
 
 	update = async ({ path, deleted, children }, originalFilepath, isDelete = false) => {
@@ -216,63 +268,62 @@ module.exports = class AtMention extends Plugin {
 		for (const mt of this.settings.mentionTypes) {
 			const maps = this.entityMaps[mt.trigger]
 			if (!maps) continue
-
+			const candidates = this.getCandidates(maps), affected = new Set()
+			const remove = (name, filepath) => {
+				if (!name) return
+				const paths = (candidates[name] || []).filter(candidate => candidate !== filepath)
+				if (paths.length) candidates[name] = paths
+				else delete candidates[name]
+				affected.add(name)
+			}
+			if (originalFilepath) remove(getEntityName(originalFilepath, mt), originalFilepath)
 			const name = getEntityName(path, mt)
 			if (name) {
 				if (isDelete || deleted) {
-					delete maps.fileMap[name]
-					for (const [alias, canonical] of Object.entries(maps.aliasMap)) {
-						if (canonical === name) delete maps.aliasMap[alias]
-					}
+					remove(name, path)
 				} else {
-					maps.fileMap[name] = path
-					if (mt.useAliases) {
-						for (const alias of this.getAliasesForFile(path)) {
-							maps.aliasMap[alias] = name
-						}
-					}
-				}
-				needsUpdate = true
-			}
-
-			if (originalFilepath) {
-				const oldName = getEntityName(originalFilepath, mt)
-				// oldName === name: moved within the same mention-type folder — the entry was
-				// just refreshed above; deleting it here would erase a live entity
-				if (oldName && oldName !== name) {
-					delete maps.fileMap[oldName]
-					for (const [alias, canonical] of Object.entries(maps.aliasMap)) {
-						if (canonical === oldName) delete maps.aliasMap[alias]
-					}
-					needsUpdate = true
+					if (!candidates[name]) candidates[name] = []
+					if (!candidates[name].includes(path)) candidates[name].push(path)
+					affected.add(name)
 				}
 			}
+			this.refreshEntityNames(maps, mt, affected)
+			if (affected.size) needsUpdate = true
 		}
 		if (needsUpdate) this.suggestor.updateEntityMaps(this.entityMaps)
 	}
 
 	initialize = () => {
-		this.entityMaps = {}
+		this.entityMaps = Object.create(null)
 		for (const mt of this.settings.mentionTypes) {
-			const fileMap = {}
-			const aliasMap = {}
+			const fileMap = Object.create(null), aliasMap = Object.create(null), candidates = Object.create(null)
 			for (const { path: filename } of this.app.vault.getMarkdownFiles()) {
 				const name = getEntityName(filename, mt)
 				if (name) {
-					fileMap[name] = filename
-					if (mt.useAliases) {
-						for (const alias of this.getAliasesForFile(filename)) {
-							aliasMap[alias] = name
-						}
-					}
+					if (!candidates[name]) candidates[name] = []
+					candidates[name].push(filename)
 				}
 			}
-			this.entityMaps[mt.trigger] = { fileMap, aliasMap, config: mt }
+			const maps = { fileMap, aliasMap, candidates, config: mt }
+			this.refreshEntityNames(maps, mt, Object.keys(candidates))
+			this.entityMaps[mt.trigger] = maps
 		}
 		this.suggestor.updateEntityMaps(this.entityMaps)
 	}
 
-	async createEntityLink(display, trigger) {
+	formatEntityLink(filepath, displayName, sourcePath, existing = false) {
+		if (this.settings.useExplicitLinks) return '[[' + filepath + '|' + displayName + ']]'
+		const file = this.app?.vault?.getAbstractFileByPath(filepath)
+		if (file && this.app.fileManager?.generateMarkdownLink) {
+			return this.app.fileManager.generateMarkdownLink(file, sourcePath, undefined, existing ? undefined : displayName)
+		}
+		const basename = filepath.slice(filepath.lastIndexOf('/') + 1, -3)
+		const ambiguous = this.app?.vault?.getMarkdownFiles?.().some(other => other.path !== filepath
+			&& other.path.slice(other.path.lastIndexOf('/') + 1, -3) === basename)
+		return '[[' + (ambiguous ? filepath.slice(0, -3) : basename) + ']]'
+	}
+
+	async createEntityLink(display, trigger, sourcePath = '') {
 		if (!isValidEntityName(display)) {
 			new Notice('实体名称不能为空或包含文件名、链接保留字符')
 			return null
@@ -291,10 +342,7 @@ module.exports = class AtMention extends Plugin {
 		// or live in a non-default folder
 		const existingPath = this.entityMaps[trigger]?.fileMap[display]
 		if (existingPath) {
-			if (this.settings.useExplicitLinks) {
-				return '[[' + existingPath + '|' + displayName + ']]'
-			}
-			return '[[' + existingPath.slice(existingPath.lastIndexOf('/') + 1, -3) + ']]'
+			return this.formatEntityLink(existingPath, displayName, sourcePath, true)
 		}
 
 		var baseFolder = mt.defaultFolder || (mt.folders && mt.folders[0]) || ''
@@ -322,10 +370,7 @@ module.exports = class AtMention extends Plugin {
 			}
 		}
 
-		if (this.settings.useExplicitLinks) {
-			return '[[' + filePath + '|' + displayName + ']]'
-		}
-		return '[[' + displayName + ']]'
+		return this.formatEntityLink(filePath, displayName, sourcePath)
 	}
 }
 
@@ -400,7 +445,7 @@ function fuzzyMatch(pattern, text) {
 // candidate (up to every entity, on a bare trigger) is what caused the multi-second lag.
 // One pass over resolvedLinks up front gives the same counts for all candidates at once.
 function buildBacklinkCounts(app) {
-    const counts = {};
+    const counts = Object.create(null);
     const resolvedLinks = app.metadataCache.resolvedLinks || {};
     for (const source in resolvedLinks) {
         for (const target in resolvedLinks[source]) {
@@ -450,7 +495,7 @@ class EntitySuggestModal extends SuggestModal {
 	}
 
 	getSuggestions(query) {
-		const bestByEntity = {}
+		const bestByEntity = Object.create(null)
 
 		// Empty query (user cleared the box): browse everything, ranked by boost
 		for (let key in (this.fileMap || {})) {
@@ -508,7 +553,7 @@ class AtMentionSuggestor extends EditorSuggest {
 	constructor(app, plugin) {
 		super(app)
 		this.plugin = plugin
-		this.entityMaps = {}
+		this.entityMaps = Object.create(null)
 		this.dismissedTriggers = {}
 		this.activeTrigger = null
 
@@ -547,7 +592,7 @@ class AtMentionSuggestor extends EditorSuggest {
 			// Boundary: a mention is a name, not a sentence — stop following the cursor
 			// once the query is clearly prose (keeps multi-word names working)
 			if (query.length > 50 || query.split(' ').length > 5) continue
-			if (idx > 0 && line[idx - 1] !== ' ') continue
+			if (idx > 0 && !/[\s({（｛【「《，。；：！？、,.;:!?]/u.test(line[idx - 1])) continue
 
 			if (!bestMatch || idx > bestMatch.index) {
 				bestMatch = { index: idx, trigger: mt.trigger, query }
@@ -574,15 +619,19 @@ class AtMentionSuggestor extends EditorSuggest {
 			start: { line: cursor.line, ch: bestMatch.index },
 			end: { line: cursor.line, ch: cursor.ch },
 			query: bestMatch.query,
+			mentionTrigger: bestMatch.trigger,
 		}
 	}
 
 	getSuggestions(context) {
-		const maps = this.entityMaps[this.activeTrigger]
+		const trigger = context.mentionTrigger || this.activeTrigger
+		const maps = this.entityMaps[trigger]
 		if (!maps) return []
+		let rangeGuard = captureEditorRange(this.app, context.editor, context.start, context.end, context.file)
+		if (rangeGuard && rangeGuard.text !== trigger + context.query) rangeGuard = null
 
 		const mt = maps.config
-		const bestByEntity = {}
+		const bestByEntity = Object.create(null)
 
 		for (let key in (maps.fileMap || {})) {
 			// Empty query (bare trigger): list everything, ranked by backlink/recency boost
@@ -618,15 +667,17 @@ class AtMentionSuggestor extends EditorSuggest {
 			suggestionType: 'set',
 			displayText: s.name,
 			matchedAlias: s.matchedAlias,
+			trigger,
+			rangeGuard,
 			context,
 		}))
 
-		if (isValidEntityName(context.query)) suggestions.push({ suggestionType: 'create', displayText: context.query, context })
+		if (isValidEntityName(context.query)) suggestions.push({ suggestionType: 'create', displayText: context.query, trigger, rangeGuard, context })
 		return suggestions
 	}
 
 	renderSuggestion(value, elem) {
-		const maps = this.entityMaps[this.activeTrigger]
+		const maps = this.entityMaps[value.trigger || this.activeTrigger]
 		const label = maps ? maps.config.label : ''
 		if (value.suggestionType === 'create') {
 			elem.setText('新建' + label + '：' + value.displayText)
@@ -638,16 +689,22 @@ class AtMentionSuggestor extends EditorSuggest {
 	}
 
 	async selectSuggestion(value) {
+		if (this.plugin._atMentionDisposed) return
 		this._selectionMade = true
 		this.dismissedTriggers = {}
-		const trigger = this.activeTrigger
-		const link = await this.plugin.createEntityLink(value.displayText, trigger)
+		const trigger = value.trigger || this.activeTrigger
+		const context = value.context
+		const guard = Object.prototype.hasOwnProperty.call(value, 'rangeGuard') ? value.rangeGuard
+			: captureEditorRange(this.app, context.editor, context.start, context.end, context.file)
+		if (!editorRangeUnchanged(guard)) return
+		const link = await this.plugin.createEntityLink(value.displayText, trigger, guard.path)
 		if (link === null) return
+		if (this.plugin._atMentionDisposed || !editorRangeUnchanged(guard)) return
 
-		value.context.editor.replaceRange(
+		guard.editor.replaceRange(
 			link,
-			value.context.start,
-			value.context.end,
+			guard.start,
+			guard.end,
 		)
 	}
 }

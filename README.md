@@ -43,3 +43,12 @@ MIT
 node test.js
 node behavior-test.cjs
 ```
+
+## 2.0.7
+
+异步创建与候选选择前后校验编辑区间、文件和插件生命周期，防止覆盖期间新输入的文字。链接交由 Obsidian 按来源文件生成，避免重名短链接歧义；修复重名实体删改索引、字符串别名及中文标点触发边界。
+
+```bash
+node --test behavior-test.cjs fix-regression.cjs
+node test.js
+```
